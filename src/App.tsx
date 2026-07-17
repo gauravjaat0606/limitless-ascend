@@ -18,6 +18,7 @@ import StreakTracker from './components/StreakTracker';
 import ActivityHeatmap from './components/ActivityHeatmap';
 import AchievementBadges from './components/AchievementBadges';
 import MotivationalQuote from './components/MotivationalQuote';
+import LifeOSEngine from './components/LifeOSEngine';
 import { loadActivities, addActivity as saveActivity } from './utils/storage';
 import { loadXP, addXP, checkLevelUp, getLevelData } from './utils/levelSystem';
 
@@ -53,6 +54,31 @@ export default function App() {
 
   const activityLogs = useMemo(() => {
     return userActivities;
+  }, [userActivities]);
+
+  // Calculate current streak for Life OS
+  const currentStreak = useMemo(() => {
+    if (userActivities.length === 0) return 0;
+    
+    const uniqueDates = Array.from(new Set(userActivities.map(a => a.date))).sort().reverse();
+    let streak = 0;
+    const today = new Date();
+    
+    for (let i = 0; i < 365; i++) {
+      const checkDate = new Date(today);
+      checkDate.setDate(checkDate.getDate() - i);
+      const dateStr = checkDate.toISOString().split('T')[0];
+      
+      if (uniqueDates.includes(dateStr)) {
+        streak++;
+      } else if (i === 0) {
+        continue;
+      } else {
+        break;
+      }
+    }
+    
+    return streak;
   }, [userActivities]);
 
   const handleAddActivity = (activity: Omit<ActivityLog, 'id' | 'improvement'>) => {
@@ -208,6 +234,14 @@ export default function App() {
             darkMode={darkMode}
             onDataChange={handleDataChange}
             activityCount={userActivities.length}
+          />
+
+          {/* Limitless AI Life Engine (Flagship Preview) */}
+          <LifeOSEngine
+            darkMode={darkMode}
+            totalXP={totalXP}
+            activities={activityLogs}
+            streak={currentStreak}
           />
 
           {/* Filter Controls */}
