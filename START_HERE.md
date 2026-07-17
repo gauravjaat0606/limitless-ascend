@@ -268,7 +268,7 @@ A complete blueprint for building the ultimate AI-powered life operating system.
 ║  Remember: 1% better every day           ║
 ║  = 37x better in a year                  ║
 ║                                           ║
-║  You've got this, Gaurav! 💪              ║
+║  You've got this, Limitless Ascend user! 💪              ║
 ║                                           ║
 ╚═══════════════════════════════════════════╝
 ```

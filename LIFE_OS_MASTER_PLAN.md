@@ -31,7 +31,7 @@ Every action updates the entire system. Nothing is isolated.
 ### Morning Briefing Screen:
 ```
 ╔══════════════════════════════════════════════╗
-║  Good Morning, Gaurav. ☀️                    ║
+║  Good Morning, Limitless Ascend user. ☀️                    ║
 ╠══════════════════════════════════════════════╣
 ║                                              ║
 ║  🎯 CURRENT MISSION: AIR < 100               ║

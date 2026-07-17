@@ -87,7 +87,7 @@ export function getLevelData(totalXP: number): LevelData {
 }
 
 // Save/Load XP from localStorage
-const XP_STORAGE_KEY = 'gaurav_total_xp';
+const XP_STORAGE_KEY = 'limitless_ascend_total_xp';
 
 export function saveXP(totalXP: number): void {
   localStorage.setItem(XP_STORAGE_KEY, totalXP.toString());

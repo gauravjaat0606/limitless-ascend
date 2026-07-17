@@ -159,7 +159,7 @@ Complete habits = Identity XP
 ### **Not a Checklist. An Intelligence.**
 
 **Morning:**
-> "Good morning, Gaurav. Based on your patterns, you're 78% likely to skip gym tonight. Here's why..."
+> "Good morning, Limitless Ascend user. Based on your patterns, you're 78% likely to skip gym tonight. Here's why..."
 
 **After Completion:**
 > "Great work! Your discipline score increased 12%. You're becoming the athlete you want to be."

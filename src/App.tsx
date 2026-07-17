@@ -19,6 +19,7 @@ import ActivityHeatmap from './components/ActivityHeatmap';
 import AchievementBadges from './components/AchievementBadges';
 import MotivationalQuote from './components/MotivationalQuote';
 import LifeOSEngine from './components/LifeOSEngine';
+import TimeRing from './components/TimeRing';
 import { loadActivities, addActivity as saveActivity } from './utils/storage';
 import { loadXP, addXP, checkLevelUp, getLevelData } from './utils/levelSystem';
 
@@ -180,7 +181,7 @@ export default function App() {
               </div>
               <div>
                 <h1 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                  Gaurav's Analytics Dashboard
+                  Limitless Ascend Analytics Dashboard
                 </h1>
                 <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
                   Track your 1% daily improvement journey
@@ -326,6 +327,9 @@ export default function App() {
             />
           </div>
 
+          {/* Interactive 24-Hour Time Ring */}
+          <TimeRing darkMode={darkMode} />
+
           {/* Streak Tracker & Achievement Badges */}
           <div className="grid grid-cols-1 gap-6">
             <StreakTracker
@@ -414,7 +418,7 @@ export default function App() {
               1.01^365 = 37.8
             </h3>
             <p className="text-purple-100">
-              Just 1% better every day leads to 37x improvement in a year. Keep going, Gaurav! 💪
+              Just 1% better every day leads to 37x improvement in a year. Keep going! 💪
             </p>
           </div>
         </div>

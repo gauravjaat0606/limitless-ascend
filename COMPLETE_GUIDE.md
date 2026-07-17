@@ -520,5 +520,5 @@ Priority 3: Daily consistency
 
 Just 1% better every day = 37.8x improvement in a year!
 
-**Your legend starts now, Gaurav!** 🎮✨👑
+**Your legend starts now, Limitless Ascend user!** 🎮✨👑
 

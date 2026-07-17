@@ -135,7 +135,7 @@ Improve habits → Energy rises → Focus improves → Learning accelerates
 
 **Every Morning:**
 ```
-🌅 Good morning, Gaurav.
+🌅 Good morning, Limitless Ascend user.
 
 🎯 Today's Mission
 Complete your Deep Work session on [Project X]
@@ -164,7 +164,7 @@ We'll check in tonight to review your wins.
 
 **Night Reflection:**
 ```
-🌙 How was your day, Gaurav?
+🌙 How was your day, Limitless Ascend user?
 
 AI asks:
 - What did you accomplish?
@@ -329,7 +329,7 @@ Achievements = Special badges
 **Not typing. Conversation.**
 
 ```
-AI: How are you feeling today, Gaurav?
+AI: How are you feeling today, Limitless Ascend user?
 
 You: Pretty good, accomplished a lot.
 

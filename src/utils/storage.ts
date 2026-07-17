@@ -1,7 +1,7 @@
 import { ActivityLog } from './dataGenerator';
 import { calculateXP } from './levelSystem';
 
-const STORAGE_KEY = 'gaurav_analytics_data';
+const STORAGE_KEY = 'limitless_ascend_analytics_data';
 
 export interface StoredData {
   activities: ActivityLog[];

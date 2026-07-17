@@ -111,7 +111,7 @@ export default function LifeOSEngine({ darkMode, totalXP, activities, streak }: 
           <div>
             <h3 className={`text-xl font-bold flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
               <Brain className="h-6 w-6 text-purple-500" />
-              Good Morning, Gaurav. ☀️
+              Good Morning. ☀️
             </h3>
             <p className={`text-sm mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
               Your AI strategist analyzing your patterns

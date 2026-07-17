@@ -180,7 +180,7 @@
 
 ### Footer Inspiration
 ✅ **1.01^365 = 37.8** formula display  
-✅ Personalized message for Gaurav  
+✅ Personalized message for Limitless Ascend user  
 ✅ Gradient background  
 ✅ Encouraging emoji  
 

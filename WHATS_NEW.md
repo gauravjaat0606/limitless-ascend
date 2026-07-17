@@ -358,5 +358,5 @@ Set goals for milestone levels:
 
 **Every legend starts at Level 1.**
 
-**What will you become, Gaurav?** 💪🎮✨
+**What will you become, Limitless Ascend user?** 💪🎮✨
 

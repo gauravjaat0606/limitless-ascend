@@ -353,5 +353,5 @@ As you level up, you unlock titles:
 
 **Remember:** Every activity counts! Even 5 minutes earns you XP. Small consistent efforts compound into legendary status! 
 
-**Go forth and level up, Gaurav!** 🎮✨
+**Go forth and level up, Limitless Ascend user!** 🎮✨
 

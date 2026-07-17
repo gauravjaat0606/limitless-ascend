@@ -806,7 +806,7 @@ RIGHT SIDE: You - Today
 ```
 ╔════════════════════════════════════════════╗
 ║                                            ║
-║  "Gaurav,                                  ║
+║  "Limitless Ascend user,                                  ║
 ║                                            ║
 ║   365 days ago, you were a different       ║
 ║   person. You had dreams but no system.    ║

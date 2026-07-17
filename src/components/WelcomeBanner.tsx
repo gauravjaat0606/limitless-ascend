@@ -42,7 +42,7 @@ export default function WelcomeBanner({ darkMode, hasUserData }: WelcomeBannerPr
         </div>
         <div className="flex-1">
           <h3 className="text-xl font-bold text-white mb-2">
-            Welcome to Your 1% Journey, Gaurav! 🎉
+            Welcome to Your 1% Journey! 🎉
           </h3>
           <p className="text-purple-100 mb-4">
             You're currently viewing <strong>demo data</strong> to show you how the dashboard works. 

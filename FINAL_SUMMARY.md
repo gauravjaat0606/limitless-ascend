@@ -431,7 +431,7 @@ The Limitless vision is **revolutionary**.
 
 **Built with:** React, TypeScript, Tailwind, Passion, and Vision
 
-**For:** Gaurav's 1% daily improvement journey
+**For:** Limitless Ascend's 1% daily improvement journey
 
 **From:** An AI that believes in your limitless potential
 

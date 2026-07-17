@@ -16,7 +16,7 @@ const quotes = [
   { text: "Your limitation—it's only your imagination.", author: "Unknown" },
   { text: "Great things never come from comfort zones.", author: "Unknown" },
   { text: "Dream it. Believe it. Build it.", author: "Unknown" },
-  { text: "Consistency beats intensity. Show up every day.", author: "Gaurav's Dashboard" },
+  { text: "Consistency beats intensity. Show up every day.", author: "Limitless Ascend" },
   { text: "The wolf on the hill is never as hungry as the wolf climbing the hill.", author: "Arnold Schwarzenegger" },
   { text: "Make your bed every morning. Small wins create momentum.", author: "Admiral McRaven" },
   { text: "Discipline equals freedom. Do the hard things now.", author: "Jocko Willink" },

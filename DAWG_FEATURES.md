@@ -171,7 +171,7 @@ Achievements: 4 / 6
  — Arnold Schwarzenegger
 
 "Consistency beats intensity. Show up every day."
- — Gaurav's Dashboard
+ — Limitless Ascend's Dashboard
 ```
 
 ### Why It Matters:
@@ -407,5 +407,5 @@ You now have a **complete DAWG-style self-improvement system**:
 
 **The wolf is hungry. Time to climb the hill.** 🐺
 
-**Start your streak today, Gaurav!** 🔥💪
+**Start your streak today, Limitless Ascend user!** 🔥💪
 

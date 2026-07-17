@@ -272,4 +272,4 @@ Know which days you perform best
 
 ---
 
-Built with ❤️ for Gaurav's continuous improvement journey.
+Built with ❤️ for your continuous improvement journey.
