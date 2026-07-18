@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Plus, Trash2, Clock as ClockIcon, Check, Flame, Layers, Sparkles } from 'lucide-react';
+import { X, Plus, Trash2, Clock as ClockIcon, Check, Flame, Layers, Sparkles, Activity, AlertTriangle, Zap } from 'lucide-react';
 
 /* ============================================================
    TYPES
    ============================================================ */
+export type ZonePriority = 'CRITICAL' | 'HIGH' | 'OPTIMAL' | 'DECAY';
+
 export interface TimeZoneItem {
   id: string;
   title: string;
@@ -13,6 +15,8 @@ export interface TimeZoneItem {
   color: string; // hex
   startMinutes: number; // 0-1439, minutes since 12:00 AM
   endMinutes: number; // 0-1439 (exclusive); may be numerically < startMinutes to represent wrap past midnight
+  elasticity: number; // 0 = rigid (won't budge when the schedule shifts) .. 1 = fluid (absorbs shift easily)
+  priority: ZonePriority; // how costly it is when this zone gets disrupted
 }
 
 interface DragState {
@@ -26,6 +30,154 @@ interface DragState {
 
 interface TimeRingProps {
   darkMode: boolean;
+}
+
+/* ============================================================
+   DOMINO SHIFT ENGINE
+   ============================================================ */
+const PRIORITY_MULTIPLIER: Record<ZonePriority, number> = {
+  CRITICAL: 2.5,
+  HIGH: 1.6,
+  OPTIMAL: 1.0,
+  DECAY: 0.5,
+};
+
+const PRIORITY_META: Record<ZonePriority, { label: string; color: string }> = {
+  CRITICAL: { label: 'Critical', color: '#EF4444' },
+  HIGH: { label: 'High', color: '#F59E0B' },
+  OPTIMAL: { label: 'Optimal', color: '#10B981' },
+  DECAY: { label: 'Decay', color: '#6B7280' },
+};
+
+export interface DominoAffectedZone {
+  zoneId: string;
+  title: string;
+  icon: string;
+  color: string;
+  appliedDelay: number;
+  newStart: number;
+  newEnd: number;
+  priority: ZonePriority;
+  elasticity: number;
+}
+
+export interface DominoConflict {
+  aId: string;
+  bId: string;
+  aTitle: string;
+  bTitle: string;
+  overlapMinutes: number;
+}
+
+export interface DominoResult {
+  updatedZones: TimeZoneItem[];
+  shiftedZoneId: string;
+  triggerDelay: number;
+  affected: DominoAffectedZone[];
+  conflicts: DominoConflict[];
+  stressScore: number; // 0-100
+  biologicalCost: number;
+}
+
+/** Circular overlap in minutes between two half-open windows on a 24h wheel, start up to but excluding end. */
+function overlapMinutes(aStart: number, aEnd: number, bStart: number, bEnd: number): number {
+  const aSpan = spanBetween(aStart, aEnd);
+  const bSpan = spanBetween(bStart, bEnd);
+  const bRelStart = wrapMinutes(bStart - aStart);
+  const overlapDirect = Math.max(0, Math.min(aSpan, bRelStart + bSpan) - Math.max(0, bRelStart));
+  const overlapWrapped = Math.max(0, Math.min(aSpan, bRelStart + bSpan - MINUTES_IN_DAY) - Math.max(0, bRelStart - MINUTES_IN_DAY));
+  return Math.max(overlapDirect, overlapWrapped);
+}
+
+function detectConflicts(zones: TimeZoneItem[]): DominoConflict[] {
+  const conflicts: DominoConflict[] = [];
+  for (let i = 0; i < zones.length; i++) {
+    for (let j = i + 1; j < zones.length; j++) {
+      const a = zones[i];
+      const b = zones[j];
+      const overlap = overlapMinutes(a.startMinutes, a.endMinutes, b.startMinutes, b.endMinutes);
+      if (overlap > 0) {
+        conflicts.push({ aId: a.id, bId: b.id, aTitle: a.title, bTitle: b.title, overlapMinutes: Math.round(overlap) });
+      }
+    }
+  }
+  return conflicts;
+}
+
+/**
+ * When a zone is dragged to a new start time, the disruption ripples forward through the
+ * rest of the day. Fluid (high-elasticity) zones absorb most of the shift; rigid zones barely
+ * move and instead accumulate "biological cost". The ripple decays with distance so a morning
+ * delay doesn't silently reschedule your entire year.
+ */
+function runDominoShift(zones: TimeZoneItem[], shiftedZoneId: string, delayMinutes: number): DominoResult {
+  const sorted = [...zones].sort((a, b) => a.startMinutes - b.startMinutes);
+  const shiftedIdx = sorted.findIndex((z) => z.id === shiftedZoneId);
+
+  if (shiftedIdx === -1 || Math.abs(delayMinutes) < SNAP_STEP) {
+    return {
+      updatedZones: zones,
+      shiftedZoneId,
+      triggerDelay: delayMinutes,
+      affected: [],
+      conflicts: detectConflicts(zones),
+      stressScore: 0,
+      biologicalCost: 0,
+    };
+  }
+
+  const RIPPLE_DECAY = 0.55;
+  const RIPPLE_FLOOR_MINUTES = 3;
+  const affected: DominoAffectedZone[] = [];
+  const patch = new Map<string, { startMinutes: number; endMinutes: number }>();
+  let biologicalCost = 0;
+
+  for (let step = 1; step < sorted.length; step++) {
+    const zone = sorted[(shiftedIdx + step) % sorted.length];
+    const rippleFactor = Math.pow(RIPPLE_DECAY, step - 1);
+    const rawDelay = delayMinutes * zone.elasticity * rippleFactor;
+    const appliedDelay = snapMinutes(rawDelay);
+
+    if (Math.abs(rawDelay) < RIPPLE_FLOOR_MINUTES) break; // ripple has dissipated
+
+    const newStart = wrapMinutes(zone.startMinutes + appliedDelay);
+    const newEnd = wrapMinutes(zone.endMinutes + appliedDelay);
+    patch.set(zone.id, { startMinutes: newStart, endMinutes: newEnd });
+
+    const cost = Math.abs(appliedDelay) * PRIORITY_MULTIPLIER[zone.priority] * (1 - zone.elasticity);
+    biologicalCost += cost;
+
+    if (appliedDelay !== 0) {
+      affected.push({
+        zoneId: zone.id,
+        title: zone.title,
+        icon: zone.icon,
+        color: zone.color,
+        appliedDelay,
+        newStart,
+        newEnd,
+        priority: zone.priority,
+        elasticity: zone.elasticity,
+      });
+    }
+  }
+
+  const updatedZones = zones.map((z) => {
+    const p = patch.get(z.id);
+    return p ? { ...z, startMinutes: p.startMinutes, endMinutes: p.endMinutes } : z;
+  });
+
+  const stressScore = Math.max(0, Math.min(100, Math.round(biologicalCost / 4)));
+
+  return {
+    updatedZones,
+    shiftedZoneId,
+    triggerDelay: delayMinutes,
+    affected,
+    conflicts: detectConflicts(updatedZones),
+    stressScore,
+    biologicalCost: Math.round(biologicalCost * 10) / 10,
+  };
 }
 
 /* ============================================================
@@ -148,18 +300,33 @@ function formatDuration(minutes: number): string {
 const STORAGE_KEY = 'limitless_ascend_time_ring_zones';
 
 const DEFAULT_ZONES: TimeZoneItem[] = [
-  { id: 'zone-sleep', title: 'Sleep', description: 'Wind down and recover.', icon: '🌙', color: '#6366F1', startMinutes: 0, endMinutes: 360 },
-  { id: 'zone-deepwork', title: 'Deep Work', description: 'Focused, distraction-free effort.', icon: '🧠', color: '#06B6D4', startMinutes: 360, endMinutes: 720 },
-  { id: 'zone-skills', title: 'Skill Building', description: 'Study, practice, and learn.', icon: '📘', color: '#10B981', startMinutes: 720, endMinutes: 1080 },
-  { id: 'zone-personal', title: 'Personal Time', description: 'Family, rest, and life admin.', icon: '⚡', color: '#F97316', startMinutes: 1080, endMinutes: 1440 },
+  { id: 'zone-sleep', title: 'Sleep', description: 'Wind down and recover.', icon: '🌙', color: '#6366F1', startMinutes: 0, endMinutes: 360, elasticity: 0.15, priority: 'CRITICAL' },
+  { id: 'zone-deepwork', title: 'Deep Work', description: 'Focused, distraction-free effort.', icon: '🧠', color: '#06B6D4', startMinutes: 360, endMinutes: 720, elasticity: 0.35, priority: 'HIGH' },
+  { id: 'zone-skills', title: 'Skill Building', description: 'Study, practice, and learn.', icon: '📘', color: '#10B981', startMinutes: 720, endMinutes: 1080, elasticity: 0.55, priority: 'OPTIMAL' },
+  { id: 'zone-personal', title: 'Personal Time', description: 'Family, rest, and life admin.', icon: '⚡', color: '#F97316', startMinutes: 1080, endMinutes: 1440, elasticity: 0.85, priority: 'DECAY' },
 ];
+
+/** Fills in elasticity/priority for zones saved before the Domino Shift Engine existed. */
+function withDominoDefaults(zone: Partial<TimeZoneItem> & { id: string; startMinutes: number; endMinutes: number }): TimeZoneItem {
+  return {
+    id: zone.id,
+    title: zone.title ?? 'Zone',
+    description: zone.description ?? '',
+    icon: zone.icon ?? '🎯',
+    color: zone.color ?? '#8B5CF6',
+    startMinutes: zone.startMinutes,
+    endMinutes: zone.endMinutes,
+    elasticity: typeof zone.elasticity === 'number' ? zone.elasticity : 0.5,
+    priority: zone.priority ?? 'OPTIMAL',
+  };
+}
 
 function loadZones(): TimeZoneItem[] {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_ZONES;
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) return parsed as TimeZoneItem[];
+    if (Array.isArray(parsed) && parsed.length > 0) return (parsed as TimeZoneItem[]).map(withDominoDefaults);
     return DEFAULT_ZONES;
   } catch {
     return DEFAULT_ZONES;
@@ -210,6 +377,8 @@ function ZoneEditorModal({
   const [color, setColor] = useState(zone.color);
   const [startTime, setStartTime] = useState(minutesToTimeInput(zone.startMinutes));
   const [endTime, setEndTime] = useState(minutesToTimeInput(zone.endMinutes));
+  const [elasticity, setElasticity] = useState(zone.elasticity);
+  const [priority, setPriority] = useState<ZonePriority>(zone.priority);
 
   const panelBg = darkMode ? 'bg-gray-900 border-white/10' : 'bg-white border-black/5';
   const inputCls = darkMode
@@ -226,6 +395,8 @@ function ZoneEditorModal({
       color,
       startMinutes: snapMinutes(timeToMinutes(startTime)),
       endMinutes: snapMinutes(timeToMinutes(endTime)),
+      elasticity,
+      priority,
     });
   };
 
@@ -346,6 +517,57 @@ function ZoneEditorModal({
             </div>
           </div>
 
+          <div>
+            <div className={`text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+              Priority <span className="opacity-60">— how costly it is if this zone gets disrupted</span>
+            </div>
+            <div className="grid grid-cols-4 gap-1.5">
+              {(Object.keys(PRIORITY_META) as ZonePriority[]).map((p) => {
+                const meta = PRIORITY_META[p];
+                const selected = priority === p;
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setPriority(p)}
+                    className="py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wide transition-all"
+                    style={{
+                      backgroundColor: selected ? hexToRgba(meta.color, darkMode ? 0.25 : 0.15) : darkMode ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                      color: selected ? meta.color : darkMode ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)',
+                      boxShadow: selected ? `0 0 0 1.5px ${meta.color}` : undefined,
+                    }}
+                  >
+                    {meta.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <div className={`text-xs font-medium ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                Elasticity <span className="opacity-60">— how easily this zone shifts</span>
+              </div>
+              <span className={`text-xs font-semibold ${darkMode ? 'text-white/70' : 'text-gray-700'}`}>
+                {elasticity < 0.34 ? 'Rigid' : elasticity < 0.67 ? 'Flexible' : 'Fluid'} · {Math.round(elasticity * 100)}%
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round(elasticity * 100)}
+              onChange={(e) => setElasticity(Number(e.target.value) / 100)}
+              className="w-full accent-current"
+              style={{ color }}
+            />
+            <div className={`flex justify-between text-[10px] mt-1 ${darkMode ? 'text-white/30' : 'text-gray-400'}`}>
+              <span>Rigid (won't budge)</span>
+              <span>Fluid (absorbs shift)</span>
+            </div>
+          </div>
+
           <div className="flex items-center gap-3 pt-2">
             <button
               onClick={() => onDelete(zone.id)}
@@ -370,6 +592,155 @@ function ZoneEditorModal({
 }
 
 /* ============================================================
+   DOMINO REPORT PANEL
+   ============================================================ */
+function StressGauge({ score, accent, darkMode }: { score: number; accent: string; darkMode: boolean }) {
+  const severity = score >= 60 ? '#EF4444' : score >= 30 ? '#F59E0B' : '#10B981';
+  const circumference = 2 * Math.PI * 26;
+  const dash = (score / 100) * circumference;
+
+  return (
+    <div className="relative w-16 h-16 flex-shrink-0">
+      <svg viewBox="0 0 64 64" className="w-16 h-16 -rotate-90">
+        <circle cx="32" cy="32" r="26" fill="none" strokeWidth="6" className={darkMode ? 'stroke-white/10' : 'stroke-black/[0.06]'} />
+        <motion.circle
+          cx="32"
+          cy="32"
+          r="26"
+          fill="none"
+          strokeWidth="6"
+          strokeLinecap="round"
+          stroke={severity}
+          strokeDasharray={circumference}
+          initial={{ strokeDashoffset: circumference }}
+          animate={{ strokeDashoffset: circumference - dash }}
+          transition={{ duration: 0.8, ease: 'easeOut' }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className={`text-sm font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>{score}</span>
+      </div>
+      <div className="absolute -inset-1 rounded-full -z-10" style={{ background: hexToRgba(accent, 0.08) }} />
+    </div>
+  );
+}
+
+function DominoReportPanel({
+  report,
+  zones,
+  darkMode,
+  onDismiss,
+}: {
+  report: DominoResult;
+  zones: TimeZoneItem[];
+  darkMode: boolean;
+  onDismiss: () => void;
+}) {
+  const shiftedZone = zones.find((z) => z.id === report.shiftedZoneId);
+  const panelBg = darkMode ? 'bg-white/[0.04] border-white/[0.08]' : 'bg-black/[0.02] border-black/[0.06]';
+  const textMuted = darkMode ? 'text-white/45' : 'text-gray-500';
+  const severity = report.stressScore >= 60 ? '#EF4444' : report.stressScore >= 30 ? '#F59E0B' : '#10B981';
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, height: 0, marginBottom: 0 }}
+      animate={{ opacity: 1, height: 'auto', marginBottom: 24 }}
+      exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+      transition={{ duration: 0.35, ease: 'easeOut' }}
+      className="overflow-hidden"
+    >
+      <div className={`rounded-2xl border p-5 ${panelBg}`}>
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <div className="flex items-center gap-3">
+            <StressGauge score={report.stressScore} accent={severity} darkMode={darkMode} />
+            <div>
+              <div className="flex items-center gap-2">
+                <Activity className="h-4 w-4" style={{ color: severity }} />
+                <h3 className={`text-sm font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>Domino Shift Engine</h3>
+              </div>
+              <p className={`text-xs mt-0.5 ${textMuted}`}>
+                {report.triggerDelay !== 0 ? (
+                  <>
+                    {shiftedZone ? `${shiftedZone.icon} ${shiftedZone.title}` : 'A zone'} moved{' '}
+                    {report.triggerDelay > 0 ? `${Math.abs(report.triggerDelay)}m later` : `${Math.abs(report.triggerDelay)}m earlier`} —
+                    {' '}biological cost <span className="font-semibold">{report.biologicalCost}</span>
+                  </>
+                ) : (
+                  <>Resizing {shiftedZone ? `${shiftedZone.icon} ${shiftedZone.title}` : 'a zone'} created a scheduling conflict</>
+                )}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onDismiss}
+            className={`p-1.5 rounded-full flex-shrink-0 transition-colors ${darkMode ? 'hover:bg-white/10 text-white/50' : 'hover:bg-black/5 text-gray-400'}`}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {report.affected.length > 0 && (
+          <div className="space-y-1.5 mb-3">
+            <div className={`text-[11px] font-semibold uppercase tracking-wide mb-2 ${textMuted}`}>Timeline Pressure</div>
+            {report.affected.map((a) => {
+              const meta = PRIORITY_META[a.priority];
+              return (
+                <div
+                  key={a.zoneId}
+                  className={`flex items-center gap-3 px-3 py-2 rounded-xl ${darkMode ? 'bg-white/[0.03]' : 'bg-black/[0.02]'}`}
+                >
+                  <span className="text-base flex-shrink-0">{a.icon}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className={`text-sm font-medium truncate ${darkMode ? 'text-white' : 'text-gray-900'}`}>{a.title}</div>
+                    <div className={`text-xs ${textMuted}`}>
+                      Now {formatClock(a.newStart)} – {formatClock(a.newEnd)}
+                    </div>
+                  </div>
+                  <span
+                    className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: hexToRgba(meta.color, 0.15), color: meta.color }}
+                  >
+                    {meta.label}
+                  </span>
+                  <span className={`text-xs font-semibold flex-shrink-0 w-14 text-right ${a.appliedDelay > 0 ? 'text-orange-500' : 'text-emerald-500'}`}>
+                    {a.appliedDelay > 0 ? '+' : ''}{a.appliedDelay}m
+                  </span>
+                  <span className={`text-[10px] flex-shrink-0 w-16 text-right ${textMuted}`}>
+                    elasticity {Math.round(a.elasticity * 100)}%
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {report.conflicts.length > 0 && (
+          <div className="space-y-1.5">
+            <div className={`text-[11px] font-semibold uppercase tracking-wide mb-2 flex items-center gap-1.5 ${textMuted}`}>
+              <AlertTriangle className="h-3 w-3 text-red-500" /> Conflicts Detected
+            </div>
+            {report.conflicts.map((c, i) => (
+              <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-500/10 text-red-500 text-xs font-medium">
+                <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
+                <span>
+                  {c.aTitle} overlaps {c.bTitle} by {c.overlapMinutes}m
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {report.affected.length === 0 && report.conflicts.length === 0 && (
+          <div className={`flex items-center gap-2 text-xs ${textMuted}`}>
+            <Zap className="h-3.5 w-3.5" /> No downstream disruption — everything absorbed the change cleanly.
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+/* ============================================================
    MAIN TIME RING COMPONENT
    ============================================================ */
 export default function TimeRing({ darkMode }: TimeRingProps) {
@@ -378,6 +749,7 @@ export default function TimeRing({ darkMode }: TimeRingProps) {
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [editingZoneId, setEditingZoneId] = useState<string | null>(null);
   const [hoveredZoneId, setHoveredZoneId] = useState<string | null>(null);
+  const [dominoReport, setDominoReport] = useState<DominoResult | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
   // live clock tick
@@ -486,9 +858,35 @@ export default function TimeRing({ darkMode }: TimeRingProps) {
 
     const handleUp = () => {
       setZones((current) => {
-        saveZones(current);
-        return current;
+        const draggedZone = current.find((z) => z.id === dragState.zoneId);
+        let finalZones = current;
+
+        if (draggedZone && dragState.type === 'move') {
+          const delay = shortestDelta(dragState.originStart, draggedZone.startMinutes);
+          const result = runDominoShift(current, dragState.zoneId, delay);
+          finalZones = result.updatedZones;
+          if (result.affected.length > 0 || result.conflicts.length > 0) {
+            setDominoReport(result);
+          }
+        } else if (draggedZone && (dragState.type === 'resize-start' || dragState.type === 'resize-end')) {
+          const conflicts = detectConflicts(current);
+          if (conflicts.length > 0) {
+            setDominoReport({
+              updatedZones: current,
+              shiftedZoneId: dragState.zoneId,
+              triggerDelay: 0,
+              affected: [],
+              conflicts,
+              stressScore: 0,
+              biologicalCost: 0,
+            });
+          }
+        }
+
+        saveZones(finalZones);
+        return finalZones;
       });
+
       const wasClick = !dragState.moved;
       const clickedZoneId = dragState.zoneId;
       setDragState(null);
@@ -514,6 +912,8 @@ export default function TimeRing({ darkMode }: TimeRingProps) {
       color: COLOR_PRESETS[zones.length % COLOR_PRESETS.length],
       startMinutes: snapMinutes(nowMinutes),
       endMinutes: snapMinutes(nowMinutes + 60),
+      elasticity: 0.5,
+      priority: 'OPTIMAL',
     };
     persistZones([...zones, newZone]);
     setEditingZoneId(id);
@@ -583,6 +983,17 @@ export default function TimeRing({ darkMode }: TimeRingProps) {
             <Plus className="h-4 w-4" /> Add Zone
           </motion.button>
         </div>
+
+        <AnimatePresence>
+          {dominoReport && (
+            <DominoReportPanel
+              report={dominoReport}
+              zones={zones}
+              darkMode={darkMode}
+              onDismiss={() => setDominoReport(null)}
+            />
+          )}
+        </AnimatePresence>
 
         <div className="grid grid-cols-1 lg:grid-cols-[auto,1fr] gap-10 items-center">
           {/* RING */}
@@ -889,6 +1300,12 @@ export default function TimeRing({ darkMode }: TimeRingProps) {
                       <span className={`block text-xs mt-0.5 ${textMuted}`}>
                         {formatClock(zone.startMinutes)} – {formatClock(zone.endMinutes)} · {formatDuration(zoneSpanMinutes(zone))}
                       </span>
+                    </span>
+                    <span
+                      className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full flex-shrink-0 hidden sm:inline-block"
+                      style={{ backgroundColor: hexToRgba(PRIORITY_META[zone.priority].color, 0.15), color: PRIORITY_META[zone.priority].color }}
+                    >
+                      {PRIORITY_META[zone.priority].label}
                     </span>
                   </motion.button>
                 );
