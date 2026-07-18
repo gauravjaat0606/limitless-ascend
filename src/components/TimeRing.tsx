@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Plus, Trash2, Clock as ClockIcon } from 'lucide-react';
+import { X, Plus, Trash2, Clock as ClockIcon, Check, Flame, Layers, Sparkles } from 'lucide-react';
 
 /* ============================================================
    TYPES
@@ -99,6 +99,25 @@ function ringArcPath(startMin: number, spanMinutes: number, radius: number, thic
 
 function zoneSpanMinutes(zone: TimeZoneItem): number {
   return spanBetween(zone.startMinutes, zone.endMinutes);
+}
+
+function hexToRgba(hex: string, alpha: number): string {
+  const clean = hex.replace('#', '');
+  const bigint = parseInt(clean.length === 3 ? clean.split('').map((c) => c + c).join('') : clean, 16);
+  const r = (bigint >> 16) & 255;
+  const g = (bigint >> 8) & 255;
+  const b = bigint & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function shadeColor(hex: string, percent: number): string {
+  const clean = hex.replace('#', '');
+  const num = parseInt(clean.length === 3 ? clean.split('').map((c) => c + c).join('') : clean, 16);
+  const amt = Math.round(2.55 * percent);
+  const r = Math.max(0, Math.min(255, (num >> 16) + amt));
+  const g = Math.max(0, Math.min(255, ((num >> 8) & 0x00ff) + amt));
+  const b = Math.max(0, Math.min(255, (num & 0x0000ff) + amt));
+  return `#${(0x1000000 + r * 0x10000 + g * 0x100 + b).toString(16).slice(1)}`;
 }
 
 function spanBetween(startMin: number, endMin: number): number {
@@ -226,10 +245,19 @@ function ZoneEditorModal({
         transition={{ type: 'spring', stiffness: 320, damping: 28 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-6 pt-6 pb-4">
-          <h3 className={`text-lg font-semibold tracking-tight ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-            Edit Zone
-          </h3>
+        <div className="h-1.5 w-full" style={{ background: `linear-gradient(90deg, ${color}, ${shadeColor(color, -15)})` }} />
+        <div className="flex items-center justify-between px-6 pt-5 pb-4">
+          <div className="flex items-center gap-2.5">
+            <span
+              className="w-9 h-9 rounded-full flex items-center justify-center text-lg flex-shrink-0"
+              style={{ backgroundColor: hexToRgba(color, darkMode ? 0.2 : 0.14) }}
+            >
+              {icon || '🎯'}
+            </span>
+            <h3 className={`text-lg font-semibold tracking-tight ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+              Edit Zone
+            </h3>
+          </div>
           <button
             onClick={onClose}
             className={`p-1.5 rounded-full transition-colors ${darkMode ? 'hover:bg-white/10 text-white/60' : 'hover:bg-black/5 text-gray-500'}`}
@@ -277,17 +305,22 @@ function ZoneEditorModal({
 
           <div>
             <div className={`text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>Color</div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2.5">
               {COLOR_PRESETS.map((c) => (
-                <button
+                <motion.button
                   key={c}
                   onClick={() => setColor(c)}
-                  className="w-7 h-7 rounded-full transition-transform hover:scale-110"
+                  whileHover={{ scale: 1.12 }}
+                  whileTap={{ scale: 0.94 }}
+                  transition={{ type: 'spring', stiffness: 500, damping: 22 }}
+                  className="relative w-8 h-8 rounded-full flex items-center justify-center"
                   style={{
                     backgroundColor: c,
-                    boxShadow: color === c ? `0 0 0 2px ${darkMode ? '#111827' : '#ffffff'}, 0 0 0 4px ${c}` : undefined,
+                    boxShadow: color === c ? `0 0 0 2px ${darkMode ? '#0b0d14' : '#ffffff'}, 0 0 0 4px ${c}, 0 4px 12px -2px ${c}99` : undefined,
                   }}
-                />
+                >
+                  {color === c && <Check className="h-4 w-4 text-white drop-shadow" strokeWidth={3} />}
+                </motion.button>
               ))}
             </div>
           </div>
@@ -497,232 +530,384 @@ export default function TimeRing({ darkMode }: TimeRingProps) {
   };
 
   const editingZone = zones.find((z) => z.id === editingZoneId) || null;
-  const panelBg = darkMode ? 'bg-gray-800 border-white/10' : 'bg-white border-black/5';
-  const textMuted = darkMode ? 'text-white/50' : 'text-gray-500';
+  const accentColor = currentZone?.color || '#8b5cf6';
+  const panelBg = darkMode
+    ? 'bg-gradient-to-br from-[#0b0d14] via-[#0d0f18] to-[#0a0b11] border-white/[0.08]'
+    : 'bg-gradient-to-br from-white via-white to-slate-50 border-black/[0.06]';
+  const textMuted = darkMode ? 'text-white/45' : 'text-gray-500';
 
   return (
-    <div className={`rounded-3xl border p-6 sm:p-8 transition-colors duration-300 ${panelBg} shadow-xl`}>
-      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
-        <div>
-          <h2 className={`text-xl font-semibold tracking-tight ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-            Time Ring
-          </h2>
-          <p className={`text-sm mt-0.5 ${textMuted}`}>Your day, mapped in a single circle</p>
-        </div>
-        <motion.button
-          onClick={handleAddZone}
-          whileHover={{ scale: 1.03 }}
-          whileTap={{ scale: 0.97 }}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
-            darkMode ? 'bg-white/10 text-white hover:bg-white/15' : 'bg-black/5 text-gray-900 hover:bg-black/10'
-          }`}
-        >
-          <Plus className="h-4 w-4" /> Add Zone
-        </motion.button>
-      </div>
+    <div
+      className={`relative overflow-hidden rounded-[2rem] border p-6 sm:p-10 transition-colors duration-500 ${panelBg}`}
+      style={{
+        boxShadow: darkMode
+          ? '0 1px 0 0 rgba(255,255,255,0.06) inset, 0 30px 80px -20px rgba(0,0,0,0.6)'
+          : '0 1px 0 0 rgba(255,255,255,0.8) inset, 0 30px 80px -30px rgba(15,23,42,0.15)',
+      }}
+    >
+      {/* ambient mesh glow, tinted by whatever zone is active right now */}
+      <div
+        className="pointer-events-none absolute inset-0 transition-all duration-1000"
+        style={{
+          background: `radial-gradient(circle at 15% 10%, ${hexToRgba(accentColor, darkMode ? 0.16 : 0.09)}, transparent 42%), radial-gradient(circle at 85% 90%, ${hexToRgba(shadeColor(accentColor, 25), darkMode ? 0.12 : 0.06)}, transparent 46%)`,
+        }}
+      />
 
-      <div className="grid grid-cols-1 lg:grid-cols-[auto,1fr] gap-8 items-center">
-        {/* RING */}
-        <div className="mx-auto w-full max-w-[420px] select-none">
-          <svg
-            ref={svgRef}
-            viewBox={`0 0 ${RING_SIZE} ${RING_SIZE}`}
-            className="w-full h-auto touch-none"
+      <div className="relative">
+        {/* HEADER */}
+        <div className="flex items-start justify-between mb-8 flex-wrap gap-4">
+          <div>
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ backgroundColor: accentColor }} />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5" style={{ backgroundColor: accentColor }} />
+              </span>
+              <span className={`text-[10px] font-semibold tracking-[0.18em] uppercase ${textMuted}`}>Live</span>
+            </div>
+            <h2 className={`text-2xl font-semibold tracking-tight ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+              Time Ring
+            </h2>
+            <p className={`text-sm mt-1 ${textMuted}`}>Your entire day, mapped onto a single circle</p>
+          </div>
+          <motion.button
+            onClick={handleAddZone}
+            whileHover={{ scale: 1.035, y: -1 }}
+            whileTap={{ scale: 0.97 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 22 }}
+            className="flex items-center gap-1.5 px-5 py-2.5 rounded-full text-sm font-semibold text-white"
+            style={{
+              background: `linear-gradient(135deg, ${accentColor}, ${shadeColor(accentColor, -15)})`,
+              boxShadow: `0 8px 24px -8px ${hexToRgba(accentColor, 0.6)}`,
+            }}
           >
-            {/* hour ticks */}
-            {Array.from({ length: 24 }).map((_, h) => {
-              const angle = minutesToAngle(h * 60);
-              const isMajor = h % 6 === 0;
-              const outer = polarPoint(angle, OUTER_RADIUS + 10);
-              const inner = polarPoint(angle, OUTER_RADIUS + (isMajor ? 2 : 5));
-              return (
-                <line
-                  key={h}
-                  x1={inner.x}
-                  y1={inner.y}
-                  x2={outer.x}
-                  y2={outer.y}
-                  strokeWidth={isMajor ? 2 : 1}
-                  className={darkMode ? 'stroke-white/25' : 'stroke-black/15'}
-                />
-              );
-            })}
+            <Plus className="h-4 w-4" /> Add Zone
+          </motion.button>
+        </div>
 
-            {/* hour labels: 12AM, 6AM, 12PM, 6PM */}
-            {[0, 6, 12, 18].map((h) => {
-              const angle = minutesToAngle(h * 60);
-              const pos = polarPoint(angle, OUTER_RADIUS + 26);
-              const label = h === 0 ? '12AM' : h === 12 ? '12PM' : h < 12 ? `${h}AM` : `${h - 12}PM`;
-              return (
-                <text
-                  key={h}
-                  x={pos.x}
-                  y={pos.y}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fontSize="11"
-                  fontWeight={600}
-                  className={darkMode ? 'fill-white/40' : 'fill-black/30'}
-                >
-                  {label}
-                </text>
-              );
-            })}
+        <div className="grid grid-cols-1 lg:grid-cols-[auto,1fr] gap-10 items-center">
+          {/* RING */}
+          <div className="mx-auto w-full max-w-[420px] select-none">
+            <svg ref={svgRef} viewBox={`0 0 ${RING_SIZE} ${RING_SIZE}`} className="w-full h-auto touch-none overflow-visible">
+              <defs>
+                {sortedZones.map((zone) => (
+                  <linearGradient key={zone.id} id={`zoneFill-${zone.id}`} x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor={shadeColor(zone.color, 12)} />
+                    <stop offset="100%" stopColor={shadeColor(zone.color, -12)} />
+                  </linearGradient>
+                ))}
+                <radialGradient id="hubGradient" cx="50%" cy="42%" r="65%">
+                  <stop offset="0%" stopColor={darkMode ? '#1a1d29' : '#ffffff'} />
+                  <stop offset="100%" stopColor={darkMode ? '#0c0d13' : '#f1f5f9'} />
+                </radialGradient>
+                <filter id="softGlow" x="-60%" y="-60%" width="220%" height="220%">
+                  <feGaussianBlur stdDeviation="7" />
+                </filter>
+              </defs>
 
-            {/* base ring track */}
-            <circle
-              cx={CENTER}
-              cy={CENTER}
-              r={OUTER_RADIUS - RING_THICKNESS / 2}
-              fill="none"
-              strokeWidth={RING_THICKNESS}
-              className={darkMode ? 'stroke-white/5' : 'stroke-black/[0.04]'}
-            />
-
-            {/* zone arcs */}
-            {sortedZones.map((zone) => {
-              const isCurrent = currentZone?.id === zone.id;
-              const isHovered = hoveredZoneId === zone.id;
-              const isDraggingThis = dragState?.zoneId === zone.id;
-              const path = ringArcPath(zone.startMinutes, zoneSpanMinutes(zone), OUTER_RADIUS, RING_THICKNESS);
-              const midAngle = minutesToAngle(zone.startMinutes + zoneSpanMinutes(zone) / 2);
-              const labelPos = polarPoint(midAngle, OUTER_RADIUS - RING_THICKNESS / 2);
-              const startHandlePos = polarPoint(minutesToAngle(zone.startMinutes), HANDLE_RADIUS);
-              const endHandlePos = polarPoint(minutesToAngle(zone.endMinutes), HANDLE_RADIUS);
-
-              return (
-                <g key={zone.id}>
-                  <motion.path
-                    d={path}
-                    fill={zone.color}
-                    opacity={isCurrent ? 1 : isHovered ? 0.92 : 0.75}
-                    style={{
-                      cursor: isDraggingThis ? 'grabbing' : 'grab',
-                      filter: isCurrent ? `drop-shadow(0 0 10px ${zone.color}aa)` : undefined,
-                    }}
-                    whileHover={{ opacity: 0.95 }}
-                    onPointerDown={(e) => handlePointerDownMove(e, zone)}
-                    onPointerEnter={() => setHoveredZoneId(zone.id)}
-                    onPointerLeave={() => setHoveredZoneId((id) => (id === zone.id ? null : id))}
+              {/* hour ticks */}
+              {Array.from({ length: 24 }).map((_, h) => {
+                const angle = minutesToAngle(h * 60);
+                const isMajor = h % 6 === 0;
+                const outer = polarPoint(angle, OUTER_RADIUS + 9);
+                const inner = polarPoint(angle, OUTER_RADIUS + (isMajor ? 1 : 5));
+                return (
+                  <line
+                    key={h}
+                    x1={inner.x}
+                    y1={inner.y}
+                    x2={outer.x}
+                    y2={outer.y}
+                    strokeWidth={isMajor ? 2 : 1}
+                    strokeLinecap="round"
+                    className={darkMode ? (isMajor ? 'stroke-white/35' : 'stroke-white/15') : isMajor ? 'stroke-black/25' : 'stroke-black/10'}
                   />
+                );
+              })}
 
-                  {/* icon label on the arc */}
+              {/* hour labels: 12AM, 6AM, 12PM, 6PM */}
+              {[0, 6, 12, 18].map((h) => {
+                const angle = minutesToAngle(h * 60);
+                const pos = polarPoint(angle, OUTER_RADIUS + 27);
+                const label = h === 0 ? '12AM' : h === 12 ? '12PM' : h < 12 ? `${h}AM` : `${h - 12}PM`;
+                return (
                   <text
-                    x={labelPos.x}
-                    y={labelPos.y}
+                    key={h}
+                    x={pos.x}
+                    y={pos.y}
                     textAnchor="middle"
                     dominantBaseline="middle"
-                    fontSize="18"
-                    className="pointer-events-none"
+                    fontSize="10.5"
+                    fontWeight={700}
+                    letterSpacing="0.5"
+                    className={darkMode ? 'fill-white/35' : 'fill-black/25'}
                   >
-                    {zone.icon}
+                    {label}
                   </text>
+                );
+              })}
 
-                  {/* resize handles */}
-                  <motion.circle
-                    cx={startHandlePos.x}
-                    cy={startHandlePos.y}
-                    r={isHovered || isCurrent || isDraggingThis ? 7 : 5}
-                    className={darkMode ? 'fill-white' : 'fill-white'}
-                    stroke={zone.color}
-                    strokeWidth={2.5}
-                    style={{ cursor: 'ew-resize' }}
-                    whileHover={{ scale: 1.3 }}
-                    onPointerDown={(e) => handlePointerDownHandle(e, zone, 'resize-start')}
-                  />
-                  <motion.circle
-                    cx={endHandlePos.x}
-                    cy={endHandlePos.y}
-                    r={isHovered || isCurrent || isDraggingThis ? 7 : 5}
-                    className="fill-white"
-                    stroke={zone.color}
-                    strokeWidth={2.5}
-                    style={{ cursor: 'ew-resize' }}
-                    whileHover={{ scale: 1.3 }}
-                    onPointerDown={(e) => handlePointerDownHandle(e, zone, 'resize-end')}
-                  />
-                </g>
-              );
-            })}
-
-            {/* current time indicator */}
-            <motion.g
-              style={{ transformOrigin: `${CENTER}px ${CENTER}px` }}
-              animate={{ rotate: nowAngle }}
-              transition={{ type: 'tween', duration: 0.6, ease: 'easeOut' }}
-            >
-              <line
-                x1={CENTER}
-                y1={CENTER - (OUTER_RADIUS - RING_THICKNESS - 6)}
-                x2={CENTER}
-                y2={CENTER - (OUTER_RADIUS + 14)}
-                strokeWidth={2}
-                className={darkMode ? 'stroke-white' : 'stroke-gray-900'}
-                strokeLinecap="round"
+              {/* base ring track (grooved bezel effect) */}
+              <circle
+                cx={CENTER}
+                cy={CENTER}
+                r={OUTER_RADIUS - RING_THICKNESS / 2}
+                fill="none"
+                strokeWidth={RING_THICKNESS + 2}
+                className={darkMode ? 'stroke-black/30' : 'stroke-black/[0.03]'}
               />
               <circle
                 cx={CENTER}
-                cy={CENTER - (OUTER_RADIUS + 14)}
-                r={5}
-                className={darkMode ? 'fill-white' : 'fill-gray-900'}
+                cy={CENTER}
+                r={OUTER_RADIUS - RING_THICKNESS / 2}
+                fill="none"
+                strokeWidth={RING_THICKNESS}
+                className={darkMode ? 'stroke-white/[0.04]' : 'stroke-black/[0.035]'}
               />
-            </motion.g>
 
-            {/* center hub */}
-            <circle cx={CENTER} cy={CENTER} r={OUTER_RADIUS - RING_THICKNESS - 14} className={darkMode ? 'fill-gray-900/40' : 'fill-black/[0.02]'} />
-            <text x={CENTER} y={CENTER - 10} textAnchor="middle" fontSize="26" fontWeight={700} className={darkMode ? 'fill-white' : 'fill-gray-900'}>
-              {formatClock(nowMinutes).split(' ')[0]}
-            </text>
-            <text x={CENTER} y={CENTER + 12} textAnchor="middle" fontSize="12" fontWeight={600} letterSpacing="1" className={darkMode ? 'fill-white/40' : 'fill-black/30'}>
-              {formatClock(nowMinutes).split(' ')[1]}
-            </text>
-            {currentZone && (
-              <text x={CENTER} y={CENTER + 32} textAnchor="middle" fontSize="12" className={darkMode ? 'fill-white/60' : 'fill-black/50'}>
-                {currentZone.icon} {currentZone.title}
-              </text>
-            )}
-          </svg>
-        </div>
+              {/* breathing glow behind the active zone */}
+              {currentZone && (
+                <motion.path
+                  d={ringArcPath(currentZone.startMinutes, zoneSpanMinutes(currentZone), OUTER_RADIUS, RING_THICKNESS)}
+                  fill={currentZone.color}
+                  filter="url(#softGlow)"
+                  animate={{ opacity: [0.35, 0.6, 0.35] }}
+                  transition={{ duration: 3.2, repeat: Infinity, ease: 'easeInOut' }}
+                />
+              )}
 
-        {/* SIDE STATS */}
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <StatTile darkMode={darkMode} label="Current Zone" value={currentZone ? `${currentZone.icon} ${currentZone.title}` : '—'} />
-            <StatTile darkMode={darkMode} label="Time Remaining" value={timeRemaining !== null ? formatDuration(timeRemaining) : '—'} />
-            <StatTile darkMode={darkMode} label="Today's Progress" value={`${todayProgress}%`} />
-            <StatTile darkMode={darkMode} label="Total Zones" value={`${zones.length}`} />
-          </div>
+              {/* zone arcs */}
+              {sortedZones.map((zone, idx) => {
+                const isCurrent = currentZone?.id === zone.id;
+                const isHovered = hoveredZoneId === zone.id;
+                const isDraggingThis = dragState?.zoneId === zone.id;
+                const path = ringArcPath(zone.startMinutes, zoneSpanMinutes(zone), OUTER_RADIUS, RING_THICKNESS);
+                const midAngle = minutesToAngle(zone.startMinutes + zoneSpanMinutes(zone) / 2);
+                const labelPos = polarPoint(midAngle, OUTER_RADIUS - RING_THICKNESS / 2);
+                const startHandlePos = polarPoint(minutesToAngle(zone.startMinutes), HANDLE_RADIUS);
+                const endHandlePos = polarPoint(minutesToAngle(zone.endMinutes), HANDLE_RADIUS);
+                const isActiveHandleSet = isHovered || isCurrent || isDraggingThis;
 
-          <div className="space-y-2">
-            {sortedZones.map((zone) => (
-              <motion.button
-                key={zone.id}
-                onClick={() => setEditingZoneId(zone.id)}
-                whileHover={{ x: 2 }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-colors ${
-                  darkMode ? 'hover:bg-white/5' : 'hover:bg-black/[0.03]'
-                } ${currentZone?.id === zone.id ? (darkMode ? 'bg-white/5' : 'bg-black/[0.03]') : ''}`}
+                return (
+                  <g key={zone.id}>
+                    <motion.path
+                      d={path}
+                      fill={`url(#zoneFill-${zone.id})`}
+                      stroke={darkMode ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.55)'}
+                      strokeWidth={1}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: isCurrent ? 1 : isHovered ? 0.96 : 0.82 }}
+                      transition={{ opacity: { duration: 0.4, delay: idx * 0.04 } }}
+                      style={{
+                        cursor: isDraggingThis ? 'grabbing' : 'grab',
+                        filter: isCurrent ? `drop-shadow(0 4px 14px ${hexToRgba(zone.color, 0.45)})` : undefined,
+                      }}
+                      onPointerDown={(e) => handlePointerDownMove(e, zone)}
+                      onPointerEnter={() => setHoveredZoneId(zone.id)}
+                      onPointerLeave={() => setHoveredZoneId((id) => (id === zone.id ? null : id))}
+                    />
+
+                    {/* icon chip on the arc */}
+                    <circle
+                      cx={labelPos.x}
+                      cy={labelPos.y}
+                      r={13}
+                      className="pointer-events-none"
+                      fill={darkMode ? 'rgba(0,0,0,0.28)' : 'rgba(255,255,255,0.55)'}
+                    />
+                    <text
+                      x={labelPos.x}
+                      y={labelPos.y + 1}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      fontSize="15"
+                      className="pointer-events-none"
+                    >
+                      {zone.icon}
+                    </text>
+
+                    {/* resize handles — two-tone with glow */}
+                    {[
+                      { pos: startHandlePos, which: 'resize-start' as const },
+                      { pos: endHandlePos, which: 'resize-end' as const },
+                    ].map(({ pos, which }) => (
+                      <motion.g
+                        key={which}
+                        style={{ cursor: 'ew-resize' }}
+                        onPointerDown={(e) => handlePointerDownHandle(e, zone, which)}
+                        whileHover={{ scale: 1.25 }}
+                        transition={{ type: 'spring', stiffness: 500, damping: 20 }}
+                      >
+                        {isActiveHandleSet && (
+                          <circle cx={pos.x} cy={pos.y} r={11} fill={hexToRgba(zone.color, 0.25)} className="pointer-events-none" />
+                        )}
+                        <circle
+                          cx={pos.x}
+                          cy={pos.y}
+                          r={isActiveHandleSet ? 6.5 : 4.5}
+                          fill={darkMode ? '#12141c' : '#ffffff'}
+                          stroke={zone.color}
+                          strokeWidth={2.5}
+                        />
+                      </motion.g>
+                    ))}
+                  </g>
+                );
+              })}
+
+              {/* current time indicator */}
+              <motion.g
+                style={{ transformOrigin: `${CENTER}px ${CENTER}px` }}
+                animate={{ rotate: nowAngle }}
+                transition={{ type: 'tween', duration: 0.6, ease: 'easeOut' }}
               >
-                <span className="w-2 h-8 rounded-full flex-shrink-0" style={{ backgroundColor: zone.color }} />
-                <span className="text-lg flex-shrink-0">{zone.icon}</span>
-                <span className="flex-1 min-w-0">
-                  <span className={`block text-sm font-medium truncate ${darkMode ? 'text-white' : 'text-gray-900'}`}>{zone.title}</span>
-                  <span className={`block text-xs ${textMuted}`}>
-                    {formatClock(zone.startMinutes)} – {formatClock(zone.endMinutes)} · {formatDuration(zoneSpanMinutes(zone))}
-                  </span>
-                </span>
-              </motion.button>
-            ))}
-            {zones.length === 0 && (
-              <div className={`text-sm text-center py-6 ${textMuted}`}>
-                No zones yet — tap "Add Zone" to map out your day.
-              </div>
-            )}
+                <line
+                  x1={CENTER}
+                  y1={CENTER - (OUTER_RADIUS - RING_THICKNESS - 6)}
+                  x2={CENTER}
+                  y2={CENTER - (OUTER_RADIUS + 16)}
+                  strokeWidth={2.5}
+                  className={darkMode ? 'stroke-white' : 'stroke-gray-900'}
+                  strokeLinecap="round"
+                  filter="url(#softGlow)"
+                  opacity={0.5}
+                />
+                <line
+                  x1={CENTER}
+                  y1={CENTER - (OUTER_RADIUS - RING_THICKNESS - 6)}
+                  x2={CENTER}
+                  y2={CENTER - (OUTER_RADIUS + 16)}
+                  strokeWidth={2}
+                  className={darkMode ? 'stroke-white' : 'stroke-gray-900'}
+                  strokeLinecap="round"
+                />
+                <motion.circle
+                  cx={CENTER}
+                  cy={CENTER - (OUTER_RADIUS + 16)}
+                  r={4.5}
+                  className={darkMode ? 'fill-white' : 'fill-gray-900'}
+                  animate={{ scale: [1, 1.4, 1] }}
+                  transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+                  style={{ transformOrigin: `${CENTER}px ${CENTER - (OUTER_RADIUS + 16)}px` }}
+                />
+              </motion.g>
+
+              {/* center hub */}
+              <circle
+                cx={CENTER}
+                cy={CENTER}
+                r={OUTER_RADIUS - RING_THICKNESS - 12}
+                fill="url(#hubGradient)"
+                stroke={darkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'}
+                strokeWidth={1}
+              />
+              <text
+                x={CENTER}
+                y={CENTER - 12}
+                textAnchor="middle"
+                fontSize="30"
+                fontWeight={700}
+                letterSpacing="-0.5"
+                fontFamily="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Display', Inter, sans-serif"
+                className={darkMode ? 'fill-white' : 'fill-gray-900'}
+                style={{ fontVariantNumeric: 'tabular-nums' }}
+              >
+                {formatClock(nowMinutes).split(' ')[0]}
+              </text>
+              <text
+                x={CENTER}
+                y={CENTER + 9}
+                textAnchor="middle"
+                fontSize="11"
+                fontWeight={700}
+                letterSpacing="2"
+                className={darkMode ? 'fill-white/35' : 'fill-black/30'}
+              >
+                {formatClock(nowMinutes).split(' ')[1]}
+              </text>
+              {currentZone && (
+                <>
+                  <rect
+                    x={CENTER - 58}
+                    y={CENTER + 20}
+                    width={116}
+                    height={22}
+                    rx={11}
+                    fill={hexToRgba(currentZone.color, darkMode ? 0.18 : 0.12)}
+                  />
+                  <text x={CENTER} y={CENTER + 34} textAnchor="middle" fontSize="11.5" fontWeight={600} className={darkMode ? 'fill-white/85' : 'fill-gray-800'}>
+                    {currentZone.icon} {currentZone.title}
+                  </text>
+                </>
+              )}
+            </svg>
           </div>
 
-          <div className={`flex items-start gap-2 text-xs rounded-xl p-3 ${darkMode ? 'bg-white/5 text-white/50' : 'bg-black/[0.03] text-gray-500'}`}>
-            <ClockIcon className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
-            <span>Drag a zone to move it, drag its end dots to resize. Everything snaps to the nearest 5 minutes and saves automatically in this browser.</span>
+          {/* SIDE STATS */}
+          <div className="space-y-5">
+            <div className="grid grid-cols-2 gap-3">
+              <StatTile darkMode={darkMode} icon={<Sparkles className="h-3.5 w-3.5" />} accent={accentColor} label="Current Zone" value={currentZone ? `${currentZone.icon} ${currentZone.title}` : '—'} />
+              <StatTile darkMode={darkMode} icon={<ClockIcon className="h-3.5 w-3.5" />} accent={accentColor} label="Time Remaining" value={timeRemaining !== null ? formatDuration(timeRemaining) : '—'} />
+              <StatTile darkMode={darkMode} icon={<Flame className="h-3.5 w-3.5" />} accent={accentColor} label="Today's Progress" value={`${todayProgress}%`} />
+              <StatTile darkMode={darkMode} icon={<Layers className="h-3.5 w-3.5" />} accent={accentColor} label="Total Zones" value={`${zones.length}`} />
+            </div>
+
+            <div className="space-y-2">
+              {sortedZones.map((zone, idx) => {
+                const isCurrent = currentZone?.id === zone.id;
+                return (
+                  <motion.button
+                    key={zone.id}
+                    onClick={() => setEditingZoneId(zone.id)}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.35, delay: idx * 0.04 }}
+                    whileHover={{ x: 3 }}
+                    className="w-full flex items-center gap-3 pl-2.5 pr-3.5 py-2.5 rounded-2xl text-left transition-colors relative overflow-hidden"
+                    style={{
+                      backgroundColor: isCurrent ? hexToRgba(zone.color, darkMode ? 0.14 : 0.08) : darkMode ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.015)',
+                    }}
+                  >
+                    <span className="w-1 self-stretch rounded-full flex-shrink-0" style={{ backgroundColor: zone.color, boxShadow: isCurrent ? `0 0 10px ${zone.color}` : undefined }} />
+                    <span
+                      className="w-9 h-9 rounded-full flex items-center justify-center text-base flex-shrink-0"
+                      style={{ backgroundColor: hexToRgba(zone.color, darkMode ? 0.18 : 0.12) }}
+                    >
+                      {zone.icon}
+                    </span>
+                    <span className="flex-1 min-w-0">
+                      <span className={`flex items-center gap-1.5 text-sm font-semibold truncate ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        {zone.title}
+                        {isCurrent && (
+                          <span
+                            className="text-[9px] font-bold tracking-wide uppercase px-1.5 py-0.5 rounded-full flex-shrink-0"
+                            style={{ backgroundColor: zone.color, color: '#fff' }}
+                          >
+                            Now
+                          </span>
+                        )}
+                      </span>
+                      <span className={`block text-xs mt-0.5 ${textMuted}`}>
+                        {formatClock(zone.startMinutes)} – {formatClock(zone.endMinutes)} · {formatDuration(zoneSpanMinutes(zone))}
+                      </span>
+                    </span>
+                  </motion.button>
+                );
+              })}
+              {zones.length === 0 && (
+                <div className={`text-sm text-center py-8 rounded-2xl ${darkMode ? 'bg-white/[0.02]' : 'bg-black/[0.02]'} ${textMuted}`}>
+                  No zones yet — tap "Add Zone" to map out your day.
+                </div>
+              )}
+            </div>
+
+            <div className={`flex items-start gap-2.5 text-xs rounded-2xl p-3.5 ${darkMode ? 'bg-white/[0.03] text-white/45' : 'bg-black/[0.025] text-gray-500'}`}>
+              <span className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${darkMode ? 'bg-white/5' : 'bg-black/5'}`}>
+                <ClockIcon className="h-3.5 w-3.5" />
+              </span>
+              <span className="leading-relaxed pt-0.5">
+                Drag a zone to move it, drag its end dots to resize. Everything snaps to the nearest 5 minutes and saves automatically in this browser.
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -742,11 +927,31 @@ export default function TimeRing({ darkMode }: TimeRingProps) {
   );
 }
 
-function StatTile({ darkMode, label, value }: { darkMode: boolean; label: string; value: string }) {
+function StatTile({
+  darkMode,
+  label,
+  value,
+  icon,
+  accent,
+}: {
+  darkMode: boolean;
+  label: string;
+  value: string;
+  icon: ReactNode;
+  accent: string;
+}) {
   return (
-    <div className={`rounded-xl p-3 ${darkMode ? 'bg-white/5' : 'bg-black/[0.03]'}`}>
-      <div className={`text-xs font-medium ${darkMode ? 'text-white/40' : 'text-gray-500'}`}>{label}</div>
-      <div className={`text-sm font-semibold mt-0.5 truncate ${darkMode ? 'text-white' : 'text-gray-900'}`}>{value}</div>
+    <div
+      className={`rounded-2xl p-3.5 transition-transform hover:-translate-y-0.5 ${darkMode ? 'bg-white/[0.035]' : 'bg-black/[0.025]'}`}
+      style={{ boxShadow: darkMode ? '0 1px 0 0 rgba(255,255,255,0.04) inset' : '0 1px 0 0 rgba(255,255,255,0.6) inset' }}
+    >
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <span className="flex items-center justify-center" style={{ color: accent }}>
+          {icon}
+        </span>
+        <div className={`text-[11px] font-medium ${darkMode ? 'text-white/40' : 'text-gray-500'}`}>{label}</div>
+      </div>
+      <div className={`text-sm font-semibold truncate ${darkMode ? 'text-white' : 'text-gray-900'}`}>{value}</div>
     </div>
   );
 }
