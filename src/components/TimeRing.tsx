@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Plus, Trash2, Clock as ClockIcon, Check, Flame, Layers, Sparkles, Activity, AlertTriangle, Zap } from 'lucide-react';
+import { X, Plus, Trash2, Clock as ClockIcon, Check, Flame, Layers, Sparkles, Activity, AlertTriangle, Zap, Moon, Battery, TrendingDown, RadioTower } from 'lucide-react';
 
 /* ============================================================
    TYPES
@@ -339,6 +339,154 @@ function saveZones(zones: TimeZoneItem[]): void {
   } catch {
     // ignore — non-fatal if storage is unavailable
   }
+}
+
+/* ============================================================
+   ADAPTIVE CHAOS HORIZON
+   Tracks whether each zone actually gets "checked in" day to day,
+   and turns that into a rolling consistency score. Zones that keep
+   getting skipped visually destabilize on the ring, and the panel
+   below explains why plus forecasts the day's energy.
+   ========================================================================= */
+export type CheckInMap = Record<string, Record<string, boolean>>; // { 'YYYY-MM-DD': { zoneId: true|false } }
+
+const CHECKIN_STORAGE_KEY = 'limitless_ascend_time_ring_checkins';
+const CHAOS_WINDOW_DAYS = 7;
+const UNSTABLE_THRESHOLD = 0.4;
+const UNSTABLE_MIN_SAMPLES = 3;
+
+function toISODateLocal(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function loadCheckIns(): CheckInMap {
+  try {
+    const raw = window.localStorage.getItem(CHECKIN_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return typeof parsed === 'object' && parsed ? (parsed as CheckInMap) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveCheckIns(data: CheckInMap): void {
+  try {
+    window.localStorage.setItem(CHECKIN_STORAGE_KEY, JSON.stringify(data));
+  } catch {
+    // ignore — non-fatal if storage is unavailable
+  }
+}
+
+export interface ZoneConsistency {
+  rate: number; // 0-1
+  sampled: number;
+  missed: number;
+  missedStreak: number;
+}
+
+function getZoneConsistency(zoneId: string, checkIns: CheckInMap, days = CHAOS_WINDOW_DAYS): ZoneConsistency {
+  const today = new Date();
+  let done = 0;
+  let sampled = 0;
+  let missedStreak = 0;
+  let streakActive = true;
+
+  for (let i = 0; i < days; i++) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const record = checkIns[toISODateLocal(d)];
+    if (record && Object.prototype.hasOwnProperty.call(record, zoneId)) {
+      sampled++;
+      if (record[zoneId]) {
+        done++;
+        streakActive = false;
+      } else if (streakActive) {
+        missedStreak++;
+      }
+    }
+  }
+
+  return { rate: sampled > 0 ? done / sampled : 1, sampled, missed: sampled - done, missedStreak };
+}
+
+export interface UnstableZoneInfo extends ZoneConsistency {
+  zoneId: string;
+  title: string;
+  icon: string;
+  color: string;
+}
+
+function findUnstableZones(zones: TimeZoneItem[], checkIns: CheckInMap): UnstableZoneInfo[] {
+  return zones
+    .map((z) => ({ zone: z, consistency: getZoneConsistency(z.id, checkIns) }))
+    .filter(({ consistency }) => consistency.sampled >= UNSTABLE_MIN_SAMPLES && consistency.rate < UNSTABLE_THRESHOLD)
+    .map(({ zone, consistency }) => ({
+      zoneId: zone.id,
+      title: zone.title,
+      icon: zone.icon,
+      color: zone.color,
+      ...consistency,
+    }))
+    .sort((a, b) => a.rate - b.rate);
+}
+
+/** How much a zone's focus has eroded so far, given how deep into it "now" is. */
+function computeFocusDecay(zone: TimeZoneItem, nowMinutes: number): number {
+  const span = zoneSpanMinutes(zone);
+  if (span <= 0) return 100;
+  const elapsed = wrapMinutes(nowMinutes - zone.startMinutes);
+  const progress = Math.min(1, elapsed / span);
+  const decayRange = 15 + (1 - zone.elasticity) * 35; // rigid/demanding zones burn focus faster
+  return Math.round(Math.max(30, 100 - progress * decayRange));
+}
+
+export interface SleepDebtInfo {
+  detected: boolean;
+  scheduledMinutes: number;
+  debtMinutes: number;
+}
+
+function computeSleepDebt(zones: TimeZoneItem[], checkIns: CheckInMap): SleepDebtInfo {
+  const sleepZones = zones.filter((z) => /sleep/i.test(z.title));
+  if (sleepZones.length === 0) return { detected: false, scheduledMinutes: 0, debtMinutes: 0 };
+
+  const scheduledMinutes = sleepZones.reduce((sum, z) => sum + zoneSpanMinutes(z), 0);
+  const RECOMMENDED_MINUTES = 480; // 8 hours
+  let debt = Math.max(0, RECOMMENDED_MINUTES - scheduledMinutes);
+
+  sleepZones.forEach((z) => {
+    const c = getZoneConsistency(z.id, checkIns);
+    if (c.sampled > 0) debt += Math.round((1 - c.rate) * 90);
+  });
+
+  return { detected: true, scheduledMinutes, debtMinutes: Math.round(debt) };
+}
+
+export interface EnergyPoint {
+  hour: number;
+  energy: number;
+}
+
+function buildEnergyForecast(zones: TimeZoneItem[], sleepDebtMinutes: number): EnergyPoint[] {
+  const sorted = [...zones].sort((a, b) => a.startMinutes - b.startMinutes);
+  const points: EnergyPoint[] = [];
+  let energy = 100 - Math.min(40, sleepDebtMinutes / 12);
+
+  for (let h = 0; h < 24; h++) {
+    const minute = h * 60;
+    const zone = sorted.find((z) => wrapMinutes(minute - z.startMinutes) < zoneSpanMinutes(z));
+    if (zone && /sleep/i.test(zone.title)) {
+      energy = Math.min(100, energy + 6);
+    } else if (zone) {
+      const drain = 1 + (1 - zone.elasticity) * 2.2 + PRIORITY_MULTIPLIER[zone.priority] * 0.6;
+      energy = Math.max(5, energy - drain);
+    } else {
+      energy = Math.max(5, energy - 1);
+    }
+    points.push({ hour: h, energy: Math.round(energy) });
+  }
+  return points;
 }
 
 const COLOR_PRESETS = ['#06B6D4', '#10B981', '#6366F1', '#F97316', '#EC4899', '#F59E0B', '#EF4444', '#8B5CF6', '#14B8A6'];
@@ -741,6 +889,146 @@ function DominoReportPanel({
 }
 
 /* ============================================================
+   ADAPTIVE CHAOS HORIZON PANEL
+   ============================================================ */
+function EnergySparkline({ points, nowHour, darkMode }: { points: EnergyPoint[]; nowHour: number; darkMode: boolean }) {
+  const w = 280;
+  const h = 64;
+  const pad = 4;
+  const xFor = (hour: number) => pad + (hour / 23) * (w - pad * 2);
+  const yFor = (energy: number) => h - pad - (energy / 100) * (h - pad * 2);
+
+  const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xFor(p.hour)},${yFor(p.energy)}`).join(' ');
+  const areaPath = `${linePath} L ${xFor(23)},${h - pad} L ${xFor(0)},${h - pad} Z`;
+  const nowX = xFor(nowHour);
+  const lowPoint = points.reduce((min, p) => (p.energy < min.energy ? p : min), points[0]);
+
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-16">
+      <defs>
+        <linearGradient id="energyFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#06B6D4" stopOpacity="0.4" />
+          <stop offset="100%" stopColor="#06B6D4" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={areaPath} fill="url(#energyFill)" stroke="none" />
+      <path d={linePath} fill="none" stroke="#06B6D4" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={xFor(lowPoint.hour)} cy={yFor(lowPoint.energy)} r={2.5} fill="#F59E0B" />
+      <line x1={nowX} y1={pad} x2={nowX} y2={h - pad} stroke={darkMode ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)'} strokeWidth={1} strokeDasharray="2 2" />
+    </svg>
+  );
+}
+
+function ChaosHorizonPanel({
+  darkMode,
+  stabilityScore,
+  unstableZones,
+  currentZone,
+  focusDecay,
+  sleepDebt,
+  energyForecast,
+  nowHour,
+}: {
+  darkMode: boolean;
+  stabilityScore: number;
+  unstableZones: UnstableZoneInfo[];
+  currentZone: TimeZoneItem | undefined;
+  focusDecay: number | null;
+  sleepDebt: SleepDebtInfo;
+  energyForecast: EnergyPoint[];
+  nowHour: number;
+}) {
+  const textMuted = darkMode ? 'text-white/45' : 'text-gray-500';
+  const cardBg = darkMode ? 'bg-white/[0.035]' : 'bg-black/[0.025]';
+  const severity = stabilityScore < 60 ? '#EF4444' : stabilityScore < 85 ? '#F59E0B' : '#10B981';
+  const focusSeverity = focusDecay !== null && focusDecay < 60 ? '#EF4444' : focusDecay !== null && focusDecay < 80 ? '#F59E0B' : '#10B981';
+  const sleepSeverity = sleepDebt.debtMinutes > 90 ? '#EF4444' : sleepDebt.debtMinutes > 30 ? '#F59E0B' : '#10B981';
+
+  return (
+    <div className="mt-8">
+      <div className="flex items-center gap-2 mb-4">
+        <RadioTower className="h-4 w-4" style={{ color: severity }} />
+        <h3 className={`text-sm font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>Adaptive Chaos Horizon</h3>
+        <span className={`text-xs ${textMuted}`}>— timeline stability {stabilityScore}%</span>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+        {/* Focus decay */}
+        <div className={`rounded-2xl p-4 ${cardBg}`}>
+          <div className="flex items-center gap-1.5 mb-2">
+            <Battery className="h-3.5 w-3.5" style={{ color: focusSeverity }} />
+            <span className={`text-[11px] font-semibold uppercase tracking-wide ${textMuted}`}>Focus Decay</span>
+          </div>
+          {focusDecay !== null && currentZone ? (
+            <>
+              <div className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>{focusDecay}%</div>
+              <div className={`text-xs mt-0.5 ${textMuted}`}>remaining in {currentZone.icon} {currentZone.title}</div>
+              <div className={`h-1.5 rounded-full mt-2 overflow-hidden ${darkMode ? 'bg-white/10' : 'bg-black/10'}`}>
+                <motion.div
+                  className="h-full rounded-full"
+                  style={{ backgroundColor: focusSeverity }}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${focusDecay}%` }}
+                  transition={{ duration: 0.6, ease: 'easeOut' }}
+                />
+              </div>
+            </>
+          ) : (
+            <div className={`text-xs ${textMuted}`}>No active zone right now.</div>
+          )}
+        </div>
+
+        {/* Sleep debt */}
+        <div className={`rounded-2xl p-4 ${cardBg}`}>
+          <div className="flex items-center gap-1.5 mb-2">
+            <Moon className="h-3.5 w-3.5" style={{ color: sleepSeverity }} />
+            <span className={`text-[11px] font-semibold uppercase tracking-wide ${textMuted}`}>Sleep Debt</span>
+          </div>
+          {sleepDebt.detected ? (
+            <>
+              <div className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>{formatDuration(sleepDebt.debtMinutes)}</div>
+              <div className={`text-xs mt-0.5 ${textMuted}`}>
+                {formatDuration(sleepDebt.scheduledMinutes)} scheduled vs 8h recommended
+              </div>
+            </>
+          ) : (
+            <div className={`text-xs ${textMuted}`}>Add a "Sleep" zone to track this.</div>
+          )}
+        </div>
+
+        {/* Energy forecast */}
+        <div className={`rounded-2xl p-4 ${cardBg} sm:col-span-1 col-span-1`}>
+          <div className="flex items-center gap-1.5 mb-2">
+            <TrendingDown className="h-3.5 w-3.5 text-cyan-500" />
+            <span className={`text-[11px] font-semibold uppercase tracking-wide ${textMuted}`}>Energy Forecast</span>
+          </div>
+          <EnergySparkline points={energyForecast} nowHour={nowHour} darkMode={darkMode} />
+          <div className={`text-[10px] mt-1 ${textMuted}`}>Dashed line marks now · dot marks today's low point</div>
+        </div>
+      </div>
+
+      {unstableZones.length > 0 ? (
+        <div className="space-y-1.5">
+          {unstableZones.map((u) => (
+            <div key={u.zoneId} className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-red-500/[0.08] text-red-500">
+              <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+              <div className="text-xs leading-relaxed">
+                <span className="font-semibold">{u.icon} {u.title}</span> is becoming unstable — missed {u.missed} of the last {u.sampled} check-ins
+                ({Math.round(u.rate * 100)}% consistency{u.missedStreak >= 2 ? `, ${u.missedStreak} in a row` : ''}).
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className={`flex items-center gap-2 text-xs px-1 ${textMuted}`}>
+          <Sparkles className="h-3.5 w-3.5" /> No unstable zones detected yet — check in on zones daily using the ✓ / ✕ buttons to build up a stability history.
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================================================
    MAIN TIME RING COMPONENT
    ============================================================ */
 export default function TimeRing({ darkMode }: TimeRingProps) {
@@ -750,6 +1038,7 @@ export default function TimeRing({ darkMode }: TimeRingProps) {
   const [editingZoneId, setEditingZoneId] = useState<string | null>(null);
   const [hoveredZoneId, setHoveredZoneId] = useState<string | null>(null);
   const [dominoReport, setDominoReport] = useState<DominoResult | null>(null);
+  const [checkIns, setCheckIns] = useState<CheckInMap>(() => loadCheckIns());
   const svgRef = useRef<SVGSVGElement>(null);
 
   // live clock tick
@@ -782,6 +1071,33 @@ export default function TimeRing({ darkMode }: TimeRingProps) {
     // Fraction of the 24h clock elapsed so far today.
     return Math.min(100, Math.round((nowMinutes / MINUTES_IN_DAY) * 100));
   }, [nowMinutes]);
+
+  const todayKey = useMemo(() => toISODateLocal(now), [now]);
+
+  const unstableZones = useMemo(() => findUnstableZones(zones, checkIns), [zones, checkIns]);
+  const unstableIds = useMemo(() => new Set(unstableZones.map((u) => u.zoneId)), [unstableZones]);
+
+  const focusDecay = useMemo(() => (currentZone ? computeFocusDecay(currentZone, nowMinutes) : null), [currentZone, nowMinutes]);
+
+  const sleepDebt = useMemo(() => computeSleepDebt(zones, checkIns), [zones, checkIns]);
+
+  const energyForecast = useMemo(() => buildEnergyForecast(zones, sleepDebt.debtMinutes), [zones, sleepDebt.debtMinutes]);
+
+  const stabilityScore = useMemo(() => {
+    if (zones.length === 0) return 100;
+    return Math.max(0, Math.round(100 - (unstableZones.length / zones.length) * 100));
+  }, [zones.length, unstableZones.length]);
+
+  const toggleCheckIn = useCallback(
+    (zoneId: string, completed: boolean) => {
+      setCheckIns((prev) => {
+        const next: CheckInMap = { ...prev, [todayKey]: { ...(prev[todayKey] || {}), [zoneId]: completed } };
+        saveCheckIns(next);
+        return next;
+      });
+    },
+    [todayKey],
+  );
 
   const persistZones = useCallback((next: TimeZoneItem[]) => {
     setZones(next);
@@ -1013,6 +1329,10 @@ export default function TimeRing({ darkMode }: TimeRingProps) {
                 <filter id="softGlow" x="-60%" y="-60%" width="220%" height="220%">
                   <feGaussianBlur stdDeviation="7" />
                 </filter>
+                <filter id="chaosDistort" x="-40%" y="-40%" width="180%" height="180%">
+                  <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="7" result="noise" />
+                  <feDisplacementMap in="SourceGraphic" in2="noise" scale="3.5" xChannelSelector="R" yChannelSelector="G" />
+                </filter>
               </defs>
 
               {/* hour ticks */}
@@ -1091,6 +1411,7 @@ export default function TimeRing({ darkMode }: TimeRingProps) {
                 const isCurrent = currentZone?.id === zone.id;
                 const isHovered = hoveredZoneId === zone.id;
                 const isDraggingThis = dragState?.zoneId === zone.id;
+                const isUnstable = unstableIds.has(zone.id);
                 const path = ringArcPath(zone.startMinutes, zoneSpanMinutes(zone), OUTER_RADIUS, RING_THICKNESS);
                 const midAngle = minutesToAngle(zone.startMinutes + zoneSpanMinutes(zone) / 2);
                 const labelPos = polarPoint(midAngle, OUTER_RADIUS - RING_THICKNESS / 2);
@@ -1103,19 +1424,50 @@ export default function TimeRing({ darkMode }: TimeRingProps) {
                     <motion.path
                       d={path}
                       fill={`url(#zoneFill-${zone.id})`}
-                      stroke={darkMode ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.55)'}
-                      strokeWidth={1}
+                      stroke={isUnstable ? '#EF4444' : darkMode ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.55)'}
+                      strokeWidth={isUnstable ? 1.5 : 1}
+                      strokeDasharray={isUnstable ? '3 4' : undefined}
                       initial={{ opacity: 0 }}
-                      animate={{ opacity: isCurrent ? 1 : isHovered ? 0.96 : 0.82 }}
-                      transition={{ opacity: { duration: 0.4, delay: idx * 0.04 } }}
+                      animate={
+                        isUnstable
+                          ? { opacity: [0.9, 0.55, 0.85, 0.4, 0.9] }
+                          : { opacity: isCurrent ? 1 : isHovered ? 0.96 : 0.82 }
+                      }
+                      transition={
+                        isUnstable
+                          ? { duration: 2.2, repeat: Infinity, ease: 'easeInOut' }
+                          : { opacity: { duration: 0.4, delay: idx * 0.04 } }
+                      }
                       style={{
                         cursor: isDraggingThis ? 'grabbing' : 'grab',
-                        filter: isCurrent ? `drop-shadow(0 4px 14px ${hexToRgba(zone.color, 0.45)})` : undefined,
+                        filter: isUnstable ? 'url(#chaosDistort)' : isCurrent ? `drop-shadow(0 4px 14px ${hexToRgba(zone.color, 0.45)})` : undefined,
                       }}
                       onPointerDown={(e) => handlePointerDownMove(e, zone)}
                       onPointerEnter={() => setHoveredZoneId(zone.id)}
                       onPointerLeave={() => setHoveredZoneId((id) => (id === zone.id ? null : id))}
                     />
+
+                    {/* fracture lines — only for unstable zones */}
+                    {isUnstable &&
+                      [0.28, 0.52, 0.76].map((frac, ci) => {
+                        const crackAngle = minutesToAngle(zone.startMinutes + zoneSpanMinutes(zone) * frac);
+                        const from = polarPoint(crackAngle, OUTER_RADIUS - 2);
+                        const to = polarPoint(crackAngle, OUTER_RADIUS - RING_THICKNESS + 2);
+                        return (
+                          <motion.line
+                            key={ci}
+                            x1={from.x}
+                            y1={from.y}
+                            x2={to.x}
+                            y2={to.y}
+                            stroke="#FCA5A5"
+                            strokeWidth={1}
+                            className="pointer-events-none"
+                            animate={{ opacity: [0, 0.9, 0] }}
+                            transition={{ duration: 1.4 + ci * 0.3, repeat: Infinity, delay: ci * 0.4, ease: 'easeInOut' }}
+                          />
+                        );
+                      })}
 
                     {/* icon chip on the arc */}
                     <circle
@@ -1133,7 +1485,7 @@ export default function TimeRing({ darkMode }: TimeRingProps) {
                       fontSize="15"
                       className="pointer-events-none"
                     >
-                      {zone.icon}
+                      {isUnstable ? '⚠️' : zone.icon}
                     </text>
 
                     {/* resize handles — two-tone with glow */}
@@ -1265,25 +1617,28 @@ export default function TimeRing({ darkMode }: TimeRingProps) {
             <div className="space-y-2">
               {sortedZones.map((zone, idx) => {
                 const isCurrent = currentZone?.id === zone.id;
+                const isUnstable = unstableIds.has(zone.id);
+                const todayStatus = checkIns[todayKey]?.[zone.id];
                 return (
-                  <motion.button
+                  <motion.div
                     key={zone.id}
-                    onClick={() => setEditingZoneId(zone.id)}
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.35, delay: idx * 0.04 }}
                     whileHover={{ x: 3 }}
-                    className="w-full flex items-center gap-3 pl-2.5 pr-3.5 py-2.5 rounded-2xl text-left transition-colors relative overflow-hidden"
+                    className="w-full flex items-center gap-3 pl-2.5 pr-3.5 py-2.5 rounded-2xl text-left transition-colors relative overflow-hidden cursor-pointer"
                     style={{
                       backgroundColor: isCurrent ? hexToRgba(zone.color, darkMode ? 0.14 : 0.08) : darkMode ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.015)',
+                      boxShadow: isUnstable ? '0 0 0 1px rgba(239,68,68,0.35) inset' : undefined,
                     }}
+                    onClick={() => setEditingZoneId(zone.id)}
                   >
-                    <span className="w-1 self-stretch rounded-full flex-shrink-0" style={{ backgroundColor: zone.color, boxShadow: isCurrent ? `0 0 10px ${zone.color}` : undefined }} />
+                    <span className="w-1 self-stretch rounded-full flex-shrink-0" style={{ backgroundColor: isUnstable ? '#EF4444' : zone.color, boxShadow: isCurrent ? `0 0 10px ${zone.color}` : undefined }} />
                     <span
                       className="w-9 h-9 rounded-full flex items-center justify-center text-base flex-shrink-0"
                       style={{ backgroundColor: hexToRgba(zone.color, darkMode ? 0.18 : 0.12) }}
                     >
-                      {zone.icon}
+                      {isUnstable ? '⚠️' : zone.icon}
                     </span>
                     <span className="flex-1 min-w-0">
                       <span className={`flex items-center gap-1.5 text-sm font-semibold truncate ${darkMode ? 'text-white' : 'text-gray-900'}`}>
@@ -1294,6 +1649,11 @@ export default function TimeRing({ darkMode }: TimeRingProps) {
                             style={{ backgroundColor: zone.color, color: '#fff' }}
                           >
                             Now
+                          </span>
+                        )}
+                        {isUnstable && (
+                          <span className="text-[9px] font-bold tracking-wide uppercase px-1.5 py-0.5 rounded-full flex-shrink-0 bg-red-500/15 text-red-500">
+                            Unstable
                           </span>
                         )}
                       </span>
@@ -1307,7 +1667,33 @@ export default function TimeRing({ darkMode }: TimeRingProps) {
                     >
                       {PRIORITY_META[zone.priority].label}
                     </span>
-                  </motion.button>
+                    <span className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        title="Mark today done"
+                        onClick={() => toggleCheckIn(zone.id, true)}
+                        className="w-6 h-6 rounded-full flex items-center justify-center transition-colors"
+                        style={{
+                          backgroundColor: todayStatus === true ? '#10B981' : darkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)',
+                          color: todayStatus === true ? '#fff' : darkMode ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.35)',
+                        }}
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        title="Mark today skipped"
+                        onClick={() => toggleCheckIn(zone.id, false)}
+                        className="w-6 h-6 rounded-full flex items-center justify-center transition-colors"
+                        style={{
+                          backgroundColor: todayStatus === false ? '#EF4444' : darkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)',
+                          color: todayStatus === false ? '#fff' : darkMode ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.35)',
+                        }}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </span>
+                  </motion.div>
                 );
               })}
               {zones.length === 0 && (
@@ -1327,6 +1713,17 @@ export default function TimeRing({ darkMode }: TimeRingProps) {
             </div>
           </div>
         </div>
+
+        <ChaosHorizonPanel
+          darkMode={darkMode}
+          stabilityScore={stabilityScore}
+          unstableZones={unstableZones}
+          currentZone={currentZone}
+          focusDecay={focusDecay}
+          sleepDebt={sleepDebt}
+          energyForecast={energyForecast}
+          nowHour={nowMinutes / 60}
+        />
       </div>
 
       <AnimatePresence>
